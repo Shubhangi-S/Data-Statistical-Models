@@ -1,0 +1,128 @@
+---
+output:
+  pdf_document:
+  latex_engine: xelatex
+word_document: default
+html_document: default
+---
+  
+```{r setup, include=FALSE, message = FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width=5, fig.height=5)
+knitr::opts_knit$set(root.dir = "~/Dropbox/courses/542")
+```
+
+# 1. Practical application of shrinkage methods.
+
+a. Read in spam_train.tsv and use the cv.glmnet() function to cross-validate a regularized logistic model across a range of possible lambda settings so that you can find the best lambda (shrinkage/regularization level) for this data. Remember that you will need to use model.matrix first to translate the data frame into a matrix; your response variable (y) will come from the column spamtype. Although ISLR puts [ , -1] after the model.matrix call, that is not actually necessary here.
+
+```{r}
+library(glmnet)
+trainset <- read.csv('data/spam_train.tsv', sep = '\t')  # sep = '\t' is admittedly
+                                                        # a tricky detail here.
+head(trainset[ , 1:5])
+```
+
+Plot the cross-validation results across that range of lambda values (include the graph in your .pdf). Also identify the best lambda setting.
+
+```{r}
+X = model.matrix(spamtype~., trainset)
+y = ifelse(trainset$spamtype == 'spam', 1, 0)
+set.seed(1)
+grid = 10^seq(5, -5, length=100)
+cv.model = cv.glmnet(X, y, alpha = 0, lambda=grid, family = 'binomial')
+
+# Note: some versions of the glmnet code in ISLR include
+# 'thresh = 1e-12'. That sets a high bar for "convergence" of
+# the model. It won't hurt here, but it can make the model
+# training step fail to terminate with lambda = 0.
+# The default threshold of 1e-7 (for the change in result
+# after each coefficient update) is sufficient.
+
+plot(cv.model)
+```
+
+That's a dramatically deep valley.
+
+The best lambda setting is:
+
+```{r}
+bestlam=cv.model$lambda.min
+bestlam
+```
+
+b. Use the best lambda setting to train a single regularized logistic model on spam_train.tsv, using now the simple glmnet() function without cross-validation.
+
+c. Read in the test set (spam_test.tsv) and use predict() to apply the model you trained in (b) to the test set. Evaluate the accuracy of this model (the proportion of predictions that correctly predict the response variable in the test set). Remember that you need to say type = ‘response’ in order to get probabilities from a logistic model.
+
+```{r, warning = FALSE}
+testset <- read.csv('data/spam_test.tsv', sep = '\t')
+test.X = model.matrix(spamtype~., testset)
+test.y = ifelse(testset$spamtype == 'spam', 1, 0)
+best.model = glmnet(X, y, alpha = 0, lambda = bestlam, family = 'binomial')
+predictions <- predict(best.model, type = 'response', newx = test.X)
+classifications <- ifelse(predictions > 0.5, 1, 0)
+mean(classifications == test.y)
+```
+
+```{r}
+# an alternate way to do this is to create a range of models, across
+# the whole lambda grid, and select one using the 's' argument to
+# the 'predict' function. Same result.
+
+rangeofmodels = glmnet(X, y, alpha = 0, lambda = grid, family = 'binomial')
+predictions <- predict(rangeofmodels, type = 'response', s = bestlam, newx = test.X)
+classifications <- ifelse(predictions > 0.5, 1, 0)
+mean(classifications == test.y)
+```
+
+d. Now train a model on the training set using no regularization/shrinkage. The easiest way to do this is to set lambda = 0 when you call glmnet. Apply that model to the test set, as before, and evaluate accuracy. Comment on the results.
+
+```{r}
+unshrunk.model = glmnet(X, y, alpha = 0, lambda = 0, family = 'binomial')
+predictions <- predict(unshrunk.model, type = 'response', newx = test.X)
+classifications <- ifelse(predictions > 0.5, 1, 0)
+mean(classifications == test.y)
+```
+
+By "comment on the result" I basically mean, observe that the regularized (L2) model is ~7% more accurate than vanilla logistic regression without coefficient shrinkage. That's enough to make a real difference in practice. (And as we'll see, it's possible to do even better than 93.9%.)
+
+e. Use the coef() function to inspect the coefficients in your model from (b) or (d). You don’t need to include all the coefficients in your .pdf — it’s a long list! Just inspect the list. 
+
+```{r}
+sorted.coefs <- sort(coef(best.model)[, 1])
+cat('Features least likely to occur in spam:\n')
+sorted.coefs[1:10]
+cat('\n')
+cat('Features very likely to occur in spam:\n')
+sorted.coefs[200:210]
+```
+
+It's not necessary to do the sorting I did above (or even to print any coefficients in your pdf). I'm just adding that in case people are curious.
+
+Then train a model on the same training set using the Lasso (L1 norm) instead of ridge regularization (L2 norm). (You can achieve this by changing alpha = 0 to alpha = 1). Inspect the coefficients of the model trained using alpha = 1 (the L1 norm). Explain why they differ dramatically from the coefficients of your earlier models. A couple of sentences should be sufficient here.
+
+>    ```Here it is sufficient to say that the model trained using an L1 norm reduces some```
+>    ```coefficients all the way to zero.```
+    
+```{r}
+cv.l1.model = cv.glmnet(X, y, alpha = 1, lambda=grid, family = 'binomial')
+bestlam.l1 = cv.l1.model$lambda.min
+cat('Best lambda: ', bestlam.l1, '\n')
+best.l1.model = glmnet(X, y, alpha = 1, lambda = bestlam.l1, family = 'binomial')
+predictions <- predict(best.l1.model, type = 'response', newx = test.X)
+classifications <- ifelse(predictions > 0.5, 1, 0)
+cat('Accuracy: ', mean(classifications == test.y), '\n')
+```
+
+The best lambda for L1 regularization is lower. And using that value, we get even better accuracy on the classification task. (It's okay if you don't mention this; I didn't necessarily ask you to compare the accuracy of the two methods. Also, it's not safe to assume that the greater success of L1 regularization will apply to all text classification tasks. In fact L2 regularization may be more commonly used.)
+
+## 2. Short answer.
+
+In class, we also practiced “best subset selection.” Why wouldn’t that approach be helpful for the spam dataset?
+
+>    ```There are several possible reasons, but one is that we've got > 200 variables and the computational task of exploring all possible subsets would become daunting.```
+    
+## 3. Multiple choice.
+
+>    ```iii. Less flexible and hence will give improved prediction accuracy when its increase in bias is less than its decrease in variance.```
+   
